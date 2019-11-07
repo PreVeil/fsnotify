@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"syscall"
@@ -347,8 +348,10 @@ func (w *Watcher) startRead(watch *watch) error {
 		w.mu.Unlock()
 		return nil
 	}
+	// Preveil local change: we pass "true" to do a recursive watch of changes to a directory subtree.
+
 	e := syscall.ReadDirectoryChanges(watch.ino.handle, &watch.buf[0],
-		uint32(unsafe.Sizeof(watch.buf)), false, mask, nil, &watch.ov, 0)
+		uint32(unsafe.Sizeof(watch.buf)), true, mask, nil, &watch.ov, 0)
 	if e != nil {
 		err := os.NewSyscallError("ReadDirectoryChanges", e)
 		if e == syscall.ERROR_ACCESS_DENIED && watch.mask&provisional == 0 {
@@ -451,8 +454,19 @@ func (w *Watcher) readEvents() {
 
 			// Point "raw" to the event in the buffer
 			raw := (*syscall.FileNotifyInformation)(unsafe.Pointer(&watch.buf[offset]))
-			buf := (*[syscall.MAX_PATH]uint16)(unsafe.Pointer(&raw.FileName))
-			name := syscall.UTF16ToString(buf[:raw.FileNameLength/2])
+			//buf := (*[syscall.MAX_PATH]uint16)(unsafe.Pointer(&raw.FileName))
+			//name := syscall.UTF16ToString(buf[:raw.FileNameLength/2])
+
+			// https://stackoverflow.com/questions/51187973/how-to-create-an-array-or-a-slice-from-an-array-unsafe-pointer-in-golang
+			// instead of using a fixed syscall.MAX_PATH buf, we create a buf that is the size of the path name
+			size := int(raw.FileNameLength / 2)
+			var buf []uint16
+			sh := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+			sh.Data = uintptr(unsafe.Pointer(&raw.FileName))
+			sh.Len = size
+			sh.Cap = size
+
+			name := syscall.UTF16ToString(buf)
 			fullname := filepath.Join(watch.path, name)
 
 			var mask uint64
