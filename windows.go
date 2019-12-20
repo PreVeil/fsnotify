@@ -11,11 +11,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
+	"reflect"
 )
 
 // Watcher watches a set of files, delivering events to a channel.
@@ -120,9 +120,13 @@ const (
 	sysFSQOVERFLOW = 0x4000
 )
 
-func newEvent(name string, mask uint32) Event {
-	e := Event{Name: name}
-	if mask&sysFSCREATE == sysFSCREATE || mask&sysFSMOVEDTO == sysFSMOVEDTO {
+func newEvent(name string, mask uint32, oldName string) Event {
+	e := Event{
+		Name: name,
+		OldName: "",
+	}
+	fmt.Println()
+	if mask&sysFSCREATE == sysFSCREATE || mask&sysFSMOVEDTO == sysFSMOVEDTO { //TODO : SHOULD WE CHANGE THE CREATE HERE TO STH ELSE?
 		e.Op |= Create
 	}
 	if mask&sysFSDELETE == sysFSDELETE || mask&sysFSDELETESELF == sysFSDELETESELF {
@@ -133,6 +137,7 @@ func newEvent(name string, mask uint32) Event {
 	}
 	if mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF || mask&sysFSMOVEDFROM == sysFSMOVEDFROM {
 		e.Op |= Rename
+		e.OldName = oldName
 	}
 	if mask&sysFSATTRIB == sysFSATTRIB {
 		e.Op |= Chmod
@@ -303,11 +308,11 @@ func (w *Watcher) remWatch(pathname string) error {
 		return fmt.Errorf("can't remove non-existent watch for: %s", pathname)
 	}
 	if pathname == dir {
-		w.sendEvent(watch.path, watch.mask&sysFSIGNORED)
+		w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "") //TODO WHY FSIGNORED
 		watch.mask = 0
 	} else {
 		name := filepath.Base(pathname)
-		w.sendEvent(filepath.Join(watch.path, name), watch.names[name]&sysFSIGNORED)
+		w.sendEvent(filepath.Join(watch.path, name), watch.names[name]&sysFSIGNORED, "")
 		delete(watch.names, name)
 	}
 	return w.startRead(watch)
@@ -317,16 +322,16 @@ func (w *Watcher) remWatch(pathname string) error {
 func (w *Watcher) deleteWatch(watch *watch) {
 	for name, mask := range watch.names {
 		if mask&provisional == 0 {
-			w.sendEvent(filepath.Join(watch.path, name), mask&sysFSIGNORED)
+			w.sendEvent(filepath.Join(watch.path, name), mask&sysFSIGNORED, "")
 		}
 		delete(watch.names, name)
 	}
 	if watch.mask != 0 {
 		if watch.mask&provisional == 0 {
-			w.sendEvent(watch.path, watch.mask&sysFSIGNORED)
+			w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "")
 		}
 		watch.mask = 0
-	}
+	}  
 }
 
 // Must run within the I/O thread.
@@ -348,15 +353,13 @@ func (w *Watcher) startRead(watch *watch) error {
 		w.mu.Unlock()
 		return nil
 	}
-	// Preveil local change: we pass "true" to do a recursive watch of changes to a directory subtree.
-
 	e := syscall.ReadDirectoryChanges(watch.ino.handle, &watch.buf[0],
-		uint32(unsafe.Sizeof(watch.buf)), true, mask, nil, &watch.ov, 0)
+		uint32(unsafe.Sizeof(watch.buf)), false, mask, nil, &watch.ov, 0)
 	if e != nil {
 		err := os.NewSyscallError("ReadDirectoryChanges", e)
 		if e == syscall.ERROR_ACCESS_DENIED && watch.mask&provisional == 0 {
 			// Watched directory was probably removed
-			if w.sendEvent(watch.path, watch.mask&sysFSDELETESELF) {
+			if w.sendEvent(watch.path, watch.mask&sysFSDELETESELF, "") {
 				if watch.mask&sysFSONESHOT != 0 {
 					watch.mask = 0
 				}
@@ -431,7 +434,7 @@ func (w *Watcher) readEvents() {
 			}
 		case syscall.ERROR_ACCESS_DENIED:
 			// Watched directory was probably removed
-			w.sendEvent(watch.path, watch.mask&sysFSDELETESELF)
+			w.sendEvent(watch.path, watch.mask&sysFSDELETESELF,"")
 			w.deleteWatch(watch)
 			w.startRead(watch)
 			continue
@@ -447,7 +450,7 @@ func (w *Watcher) readEvents() {
 		var offset uint32
 		for {
 			if n == 0 {
-				w.Events <- newEvent("", sysFSQOVERFLOW)
+				w.Events <- newEvent("", sysFSQOVERFLOW, "")
 				w.Errors <- errors.New("short read in readEvents()")
 				break
 			}
@@ -456,10 +459,8 @@ func (w *Watcher) readEvents() {
 			raw := (*syscall.FileNotifyInformation)(unsafe.Pointer(&watch.buf[offset]))
 			//buf := (*[syscall.MAX_PATH]uint16)(unsafe.Pointer(&raw.FileName))
 			//name := syscall.UTF16ToString(buf[:raw.FileNameLength/2])
-
-			// https://stackoverflow.com/questions/51187973/how-to-create-an-array-or-a-slice-from-an-array-unsafe-pointer-in-golang
-			// instead of using a fixed syscall.MAX_PATH buf, we create a buf that is the size of the path name
-			size := int(raw.FileNameLength / 2)
+			
+			size := int(raw.FileNameLength/2)
 			var buf []uint16
 			sh := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
 			sh.Data = uintptr(unsafe.Pointer(&raw.FileName))
@@ -475,18 +476,24 @@ func (w *Watcher) readEvents() {
 				mask = sysFSDELETESELF
 			case syscall.FILE_ACTION_MODIFIED:
 				mask = sysFSMODIFY
-			case syscall.FILE_ACTION_RENAMED_OLD_NAME:
+			case syscall.FILE_ACTION_RENAMED_OLD_NAME:{
 				watch.rename = name
-			case syscall.FILE_ACTION_RENAMED_NEW_NAME:
+				fmt.Println("RENAME OLD NAME, name:  "+name+"\n")
+			}
+			case syscall.FILE_ACTION_RENAMED_NEW_NAME:{
+				fmt.Println("RENAME NEW NAME,  name:"+name+"\n")
+				fmt.Println("RENAME NEW NAME, old name:"+watch.rename+"\n")
 				if watch.names[watch.rename] != 0 {
 					watch.names[name] |= watch.names[watch.rename]
 					delete(watch.names, watch.rename)
 					mask = sysFSMOVESELF
 				}
 			}
+			}
 
 			sendNameEvent := func() {
-				if w.sendEvent(fullname, watch.names[name]&mask) {
+				fmt.Println("sendEvent++ fullname",fullname,"watch.names", watch.names[name]&mask,"watch.rename", watch.rename, mask)
+				if w.sendEvent(fullname, watch.names[name]&mask, watch.rename) {
 					if watch.names[name]&sysFSONESHOT != 0 {
 						delete(watch.names, name)
 					}
@@ -496,10 +503,10 @@ func (w *Watcher) readEvents() {
 				sendNameEvent()
 			}
 			if raw.Action == syscall.FILE_ACTION_REMOVED {
-				w.sendEvent(fullname, watch.names[name]&sysFSIGNORED)
+				w.sendEvent(fullname, watch.names[name]&sysFSIGNORED, "")
 				delete(watch.names, name)
 			}
-			if w.sendEvent(fullname, watch.mask&toFSnotifyFlags(raw.Action)) {
+			if w.sendEvent(fullname, watch.mask&toFSnotifyFlags(raw.Action), watch.rename) {
 				if watch.mask&sysFSONESHOT != 0 {
 					watch.mask = 0
 				}
@@ -528,11 +535,11 @@ func (w *Watcher) readEvents() {
 	}
 }
 
-func (w *Watcher) sendEvent(name string, mask uint64) bool {
+func (w *Watcher) sendEvent(name string, mask uint64, oldName string) bool {
 	if mask == 0 {
 		return false
 	}
-	event := newEvent(name, uint32(mask))
+	event := newEvent(name, uint32(mask), oldName)
 	select {
 	case ch := <-w.quit:
 		w.quit <- ch
