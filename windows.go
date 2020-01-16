@@ -327,7 +327,6 @@ func (w *Watcher) remWatch(pathname string) error {
 
 // Must run within the I/O thread.
 func (w *Watcher) deleteWatch(watch *watch) {
-	fmt.Println("windows.go : deleteWatch function")
 	for name, mask := range watch.names {
 		if mask&provisional == 0 {
 			w.sendEvent(filepath.Join(watch.path, name), mask&sysFSIGNORED, "")
@@ -532,8 +531,6 @@ func (w *Watcher) readEvents() {
 					fullname = filepath.Join(watch.path, name)
 					sendNameEvent(true)
 				}
-			} else {
-				fmt.Println("======")
 			}
 			// Move to the next event in the buffer
 			if raw.NextEntryOffset == 0 {
@@ -585,7 +582,6 @@ func toWindowsFlags(mask uint64) uint32 {
 }
 
 func toFSnotifyFlags(action uint32) uint64 {
-	//fmt.Println("windows.go : toFSnotifyFlags function")
 	switch action {
 	case syscall.FILE_ACTION_ADDED:
 		return sysFSCREATE
