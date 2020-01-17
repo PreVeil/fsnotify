@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -600,6 +601,179 @@ func TestFsnotifyRename(t *testing.T) {
 					renameReceived.increment()
 				}
 				t.Logf("event received: %s", event)
+			} else {
+				t.Logf("unexpected event received: %s", event)
+			}
+		}
+		done <- true
+	}()
+
+	// Create a file
+	// This should add at least one event to the fsnotify event queue
+	var f *os.File
+	f, err := os.OpenFile(testFile, os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		t.Fatalf("creating test file failed: %s", err)
+	}
+	f.Sync()
+
+	f.WriteString("data")
+	f.Sync()
+	f.Close()
+
+	// Add a watch for testFile
+	addWatch(t, watcher, testFile)
+
+	if err := testRename(testFile, testFileRenamed); err != nil {
+		t.Fatalf("rename failed: %s", err)
+	}
+
+	// We expect this event to be received almost immediately, but let's wait 500 ms to be sure
+	time.Sleep(500 * time.Millisecond)
+	if renameReceived.value() == 0 {
+		t.Fatal("fsnotify rename events have not been received after 500 ms")
+	}
+
+	// Try closing the fsnotify instance
+	t.Log("calling Close()")
+	watcher.Close()
+	t.Log("waiting for the event channel to become closed...")
+	select {
+	case <-done:
+		t.Log("event channel closed")
+	case <-time.After(2 * time.Second):
+		t.Fatal("event stream was not closed after 2 seconds")
+	}
+	os.Remove(testFileRenamed)
+}
+
+func TestFsnotifyMultipleRenames(t *testing.T) {
+	watcher := newWatcher(t)
+
+	// Create directory to watch
+	testDir := tempMkdir(t)
+	defer os.RemoveAll(testDir)
+
+	addWatch(t, watcher, testDir)
+
+	// Receive errors on the error channel on a separate goroutine
+	go func() {
+		for err := range watcher.Errors {
+			t.Errorf("error received: %s", err)
+		}
+	}()
+
+	// Receive events on the event channel on a separate goroutine
+	eventstream := watcher.Events
+	var renameReceived counter
+	newName := ""
+	oldName := ""
+	done := make(chan bool)
+	go func() {
+		for event := range eventstream {
+			// Only count rename events
+			// Checks if the oldname attribute is set up accordingly
+			if event.Op&Rename == Rename {
+				newName, _ = filepath.Rel(testDir, event.Name)
+				oldName, _ = filepath.Rel(testDir, event.OldName)
+				if newName != oldName+"Renamed" {
+					t.Errorf("rename order messed up: %s", event)
+				}
+				renameReceived.increment()
+				t.Logf("event received: %s", event)
+			}
+		}
+		done <- true
+	}()
+
+	// Define rename action : create a file and rename it
+	// This should add at least one event to the fsnotify event queue
+	numberOfFiles := 1000
+	testFileNameCommon := "TestFsnotifyEvents.testfile"
+	renameAction := func(t *testing.T, count string) {
+
+		testFile := filepath.Join(testDir, testFileNameCommon+count)
+		f, err := os.OpenFile(testFile, os.O_WRONLY|os.O_CREATE, 0666)
+		if err != nil {
+			t.Fatalf("creating test file failed: %s", err)
+		}
+		f.Close()
+
+		addWatch(t, watcher, testFile)
+
+		testFileRenamed := filepath.Join(testDir, testFileNameCommon+count+"Renamed")
+		if err := testRename(testFile, testFileRenamed); err != nil {
+			t.Fatalf("rename failed: %s", err)
+		}
+	}
+	// Creates #numberofFiles files and rename them
+	// Avoid buffer overflow by adding a short wait time
+	for i := 0; i < numberOfFiles; i++ {
+		go renameAction(t, strconv.Itoa(i))
+		time.Sleep(5 * time.Millisecond)
+	}
+	// We expect this event to be received almost immediately, but let's wait 1000 ms to be sure
+	time.Sleep(1000 * time.Millisecond)
+	if renameReceived.value() == 0 {
+		t.Fatal("fsnotify rename events have not been received after 500 ms")
+	}
+	if renameReceived.value() != int32(numberOfFiles) {
+		t.Fatal("watcher missed a fsnotify rename event")
+	}
+
+	// Try closing the fsnotify instance
+	t.Log("calling Close()")
+	watcher.Close()
+	t.Log("waiting for the event channel to become closed...")
+	select {
+	case <-done:
+		t.Log("event channel closed")
+	case <-time.After(2 * time.Second):
+		t.Fatal("event stream was not closed after 2 seconds")
+	}
+	for i := 0; i < numberOfFiles; i++ {
+		testFileRenamed := filepath.Join(testDir, testFileNameCommon+strconv.Itoa(i)+"Renamed")
+		os.Remove(testFileRenamed)
+	}
+}
+
+// This test checked if the OldName attribute is set up for the rename event
+func TestFsnotifyRenameEventAttributes(t *testing.T) {
+	watcher := newWatcher(t)
+
+	// Create directory to watch
+	testDir := tempMkdir(t)
+	defer os.RemoveAll(testDir)
+
+	addWatch(t, watcher, testDir)
+
+	// Receive errors on the error channel on a separate goroutine
+	go func() {
+		for err := range watcher.Errors {
+			t.Errorf("error received: %s", err)
+		}
+	}()
+
+	testFile := filepath.Join(testDir, "TestFsnotifyEvents.testfile")
+	testFileRenamed := filepath.Join(testDir, "TestFsnotifyEvents.testfileRenamed")
+
+	// Receive events on the event channel on a separate goroutine
+	eventstream := watcher.Events
+	var renameReceived counter
+	done := make(chan bool)
+	go func() {
+		for event := range eventstream {
+			// Only count relevant events
+			if event.Name == filepath.Clean(testDir) || event.Name == filepath.Clean(testFile) || event.Name == filepath.Clean(testFileRenamed) {
+				if event.Op&Rename == Rename {
+					renameReceived.increment()
+				}
+				t.Logf("event received: %s", event)
+				if event.Name == filepath.Clean(testFile) {
+					if event.OldName != filepath.Clean(testFileRenamed) {
+						t.Logf("unexpected old name for a file in rename event: %s", event)
+					}
+				}
 			} else {
 				t.Logf("unexpected event received: %s", event)
 			}

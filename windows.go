@@ -315,7 +315,7 @@ func (w *Watcher) remWatch(pathname string) error {
 		return fmt.Errorf("can't remove non-existent watch for: %s", pathname)
 	}
 	if pathname == dir {
-		w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "") //TODO WHY FSIGNORED
+		w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "")
 		watch.mask = 0
 	} else {
 		name := filepath.Base(pathname)
@@ -361,7 +361,7 @@ func (w *Watcher) startRead(watch *watch) error {
 		return nil
 	}
 	e := syscall.ReadDirectoryChanges(watch.ino.handle, &watch.buf[0],
-		uint32(unsafe.Sizeof(watch.buf)), false, mask, nil, &watch.ov, 0)
+		uint32(unsafe.Sizeof(watch.buf)), true, mask, nil, &watch.ov, 0)
 	if e != nil {
 		err := os.NewSyscallError("ReadDirectoryChanges", e)
 		if e == syscall.ERROR_ACCESS_DENIED && watch.mask&provisional == 0 {
@@ -482,9 +482,8 @@ func (w *Watcher) readEvents() {
 				mask = sysFSDELETESELF
 			case syscall.FILE_ACTION_MODIFIED:
 				mask = sysFSMODIFY
-			case syscall.FILE_ACTION_RENAMED_OLD_NAME: // check the cases here
+			case syscall.FILE_ACTION_RENAMED_OLD_NAME:
 				{
-					// TODO here check the cases
 					watch.rename = filepath.Join(watch.path, name)
 				}
 			case syscall.FILE_ACTION_RENAMED_NEW_NAME:
