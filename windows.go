@@ -48,6 +48,10 @@ func NewWatcher() (*Watcher, error) {
 	return w, nil
 }
 
+func CreateFsnotifyEvent(name string, mask uint32, oldname string) {
+	return newEvent(name, mask, oldname)
+}
+
 // Close removes all watches and closes the events channel.
 func (w *Watcher) Close() error {
 	if w.isClosed {
