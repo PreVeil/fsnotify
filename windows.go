@@ -48,7 +48,7 @@ func NewWatcher() (*Watcher, error) {
 	return w, nil
 }
 
-func CreateFsnotifyEvent(name string, mask Op, oldname string) {
+func CreateFsnotifyEvent(name string, mask uint32, oldname string) Event {
 	return newEvent(name, mask, oldname)
 }
 
