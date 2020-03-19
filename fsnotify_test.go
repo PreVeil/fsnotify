@@ -16,7 +16,7 @@ import (
 func TestEventStringWithValue(t *testing.T) {
 	for opMask, expectedString := range map[Op]string{
 		Chmod | Create: `"/usr/someFile": CREATE|CHMOD`,
-		Rename:         `"/usr/someFile": RENAME`,
+		Rename:         `"/usr/someFile": "": RENAME`,
 		Remove:         `"/usr/someFile": REMOVE`,
 		Write | Chmod:  `"/usr/someFile": WRITE|CHMOD`,
 	} {

@@ -49,6 +49,10 @@ func NewWatcher() (*Watcher, error) {
 	return w, nil
 }
 
+func CreateFsnotifyEvent(name string, mask uint32, oldname string) Event {
+	return newEvent(name, mask, oldname)
+}
+
 // Close removes all watches and closes the events channel.
 func (w *Watcher) Close() error {
 	if w.isClosed {
@@ -127,10 +131,13 @@ func generateID() uint64 {
 func newEvent(name string, mask uint32, oldName string) Event {
 	e := Event{
 		Name:    name,
-		OldName: "",
+		OldName: oldName,
 		ID:      generateID(),
 	}
-	if mask&sysFSCREATE == sysFSCREATE || mask&sysFSMOVEDTO == sysFSMOVEDTO { //TODO : SHOULD WE CHANGE THE CREATE HERE TO STH ELSE?
+	if mask&sysFSMOVEDFROM == sysFSMOVEDFROM || mask&sysFSMOVEDTO == sysFSMOVEDTO {
+		e.Op |= Rename
+	}
+	if mask&sysFSCREATE == sysFSCREATE {
 		e.Op |= Create
 	}
 	if mask&sysFSDELETE == sysFSDELETE || mask&sysFSDELETESELF == sysFSDELETESELF {
@@ -139,13 +146,13 @@ func newEvent(name string, mask uint32, oldName string) Event {
 	if mask&sysFSMODIFY == sysFSMODIFY {
 		e.Op |= Write
 	}
-	if mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF || mask&sysFSMOVEDFROM == sysFSMOVEDFROM {
+	if mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF {
 		e.Op |= Rename
-		e.OldName = oldName
 	}
 	if mask&sysFSATTRIB == sysFSATTRIB {
 		e.Op |= Chmod
 	}
+
 	return e
 }
 
@@ -297,6 +304,7 @@ func (w *Watcher) addWatch(pathname string, flags uint64) error {
 
 // Must run within the I/O thread.
 func (w *Watcher) remWatch(pathname string) error {
+
 	dir, err := getDir(pathname)
 	if err != nil {
 		return err
@@ -312,7 +320,7 @@ func (w *Watcher) remWatch(pathname string) error {
 		return fmt.Errorf("can't remove non-existent watch for: %s", pathname)
 	}
 	if pathname == dir {
-		w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "") //TODO WHY FSIGNORED
+		w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "")
 		watch.mask = 0
 	} else {
 		name := filepath.Base(pathname)
@@ -358,7 +366,7 @@ func (w *Watcher) startRead(watch *watch) error {
 		return nil
 	}
 	e := syscall.ReadDirectoryChanges(watch.ino.handle, &watch.buf[0],
-		uint32(unsafe.Sizeof(watch.buf)), false, mask, nil, &watch.ov, 0)
+		uint32(unsafe.Sizeof(watch.buf)), true, mask, nil, &watch.ov, 0)
 	if e != nil {
 		err := os.NewSyscallError("ReadDirectoryChanges", e)
 		if e == syscall.ERROR_ACCESS_DENIED && watch.mask&provisional == 0 {
@@ -463,7 +471,6 @@ func (w *Watcher) readEvents() {
 			raw := (*syscall.FileNotifyInformation)(unsafe.Pointer(&watch.buf[offset]))
 			//buf := (*[syscall.MAX_PATH]uint16)(unsafe.Pointer(&raw.FileName))
 			//name := syscall.UTF16ToString(buf[:raw.FileNameLength/2])
-
 			size := int(raw.FileNameLength / 2)
 			var buf []uint16
 			sh := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
@@ -481,7 +488,7 @@ func (w *Watcher) readEvents() {
 				mask = sysFSMODIFY
 			case syscall.FILE_ACTION_RENAMED_OLD_NAME:
 				{
-					watch.rename = name
+					watch.rename = filepath.Join(watch.path, name)
 				}
 			case syscall.FILE_ACTION_RENAMED_NEW_NAME:
 				{
@@ -492,31 +499,42 @@ func (w *Watcher) readEvents() {
 					}
 				}
 			}
-
-			sendNameEvent := func() {
+			sendNameEvent := func(setOldName bool) {
+				if !setOldName {
+					if watch.rename != "" {
+						if w.sendEvent("", watch.names[name]&mask, watch.rename) {
+							if watch.names[name]&sysFSONESHOT != 0 {
+								delete(watch.names, name)
+							}
+							watch.rename = ""
+						}
+					}
+				}
 				if w.sendEvent(fullname, watch.names[name]&mask, watch.rename) {
 					if watch.names[name]&sysFSONESHOT != 0 {
 						delete(watch.names, name)
 					}
 				}
+				watch.rename = ""
 			}
-			if raw.Action != syscall.FILE_ACTION_RENAMED_NEW_NAME {
-				sendNameEvent()
-			}
-			if raw.Action == syscall.FILE_ACTION_REMOVED {
-				w.sendEvent(fullname, watch.names[name]&sysFSIGNORED, "")
-				delete(watch.names, name)
-			}
-			if w.sendEvent(fullname, watch.mask&toFSnotifyFlags(raw.Action), watch.rename) {
-				if watch.mask&sysFSONESHOT != 0 {
-					watch.mask = 0
+			if raw.Action != syscall.FILE_ACTION_RENAMED_OLD_NAME {
+				if raw.Action != syscall.FILE_ACTION_RENAMED_NEW_NAME {
+					sendNameEvent(false)
+				}
+				if raw.Action == syscall.FILE_ACTION_REMOVED {
+					w.sendEvent(fullname, watch.names[name]&sysFSIGNORED, "")
+					delete(watch.names, name)
+				}
+				if w.sendEvent(fullname, watch.mask&toFSnotifyFlags(raw.Action), watch.rename) {
+					if watch.mask&sysFSONESHOT != 0 {
+						watch.mask = 0
+					}
+				}
+				if raw.Action == syscall.FILE_ACTION_RENAMED_NEW_NAME {
+					fullname = filepath.Join(watch.path, name)
+					sendNameEvent(true)
 				}
 			}
-			if raw.Action == syscall.FILE_ACTION_RENAMED_NEW_NAME {
-				fullname = filepath.Join(watch.path, watch.rename)
-				sendNameEvent()
-			}
-
 			// Move to the next event in the buffer
 			if raw.NextEntryOffset == 0 {
 				break
