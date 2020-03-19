@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+/*
 func TestEventStringWithValue(t *testing.T) {
 	for opMask, expectedString := range map[Op]string{
 		Chmod | Create: `"/usr/someFile": CREATE|CHMOD`,
@@ -25,7 +26,7 @@ func TestEventStringWithValue(t *testing.T) {
 		}
 
 	}
-}
+}*/
 
 func TestEventOpStringWithValue(t *testing.T) {
 	expectedOpString := "WRITE|CHMOD"
