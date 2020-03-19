@@ -61,7 +61,7 @@ func (op Op) String() string {
 // String returns a string representation of the event in the form
 // "file: REMOVE|WRITE|..."
 func (e Event) String() string {
-	return fmt.Sprintf("%q: %s - %d", e.Name, e.Op.String(), e.ID)
+	return fmt.Sprintf("%q: %q %s - %d", e.Name, e.OldName, e.Op.String(), e.ID)
 }
 
 // Common errors that can be reported by a watcher

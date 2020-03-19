@@ -152,7 +152,7 @@ func newEvent(name string, mask uint32, oldName string) Event {
 	if mask&sysFSATTRIB == sysFSATTRIB {
 		e.Op |= Chmod
 	}
-
+	fmt.Println(" CREATE EVENT ::: ", e)
 	return e
 }
 
