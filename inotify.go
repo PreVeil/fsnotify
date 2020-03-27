@@ -314,6 +314,9 @@ func (e *Event) ignoreLinux(mask uint32) bool {
 	}
 	return false
 }
+func CreateFsnotifyEvent(name string, mask uint32, oldname string) Event {
+	return newEvent(name, mask)
+}
 
 // newEvent returns an platform-independent Event based on an inotify mask.
 func newEvent(name string, mask uint32) Event {
