@@ -481,7 +481,7 @@ func (w *Watcher) readEvents() {
 			name := syscall.UTF16ToString(buf)
 			fullname := filepath.Join(watch.path, name)
 			var mask uint64
-			fmt.Println("Fstnotify | windows | raw action", raw.Action)
+			fmt.Println("Fstnotify | windows | raw action", raw.Action, fullname)
 			switch raw.Action {
 			case syscall.FILE_ACTION_REMOVED:
 				mask = sysFSDELETESELF
@@ -489,10 +489,12 @@ func (w *Watcher) readEvents() {
 				mask = sysFSMODIFY
 			case syscall.FILE_ACTION_RENAMED_OLD_NAME:
 				{
+					fmt.Println("RENAME OLD", fullname)
 					watch.rename = filepath.Join(watch.path, name)
 				}
 			case syscall.FILE_ACTION_RENAMED_NEW_NAME:
 				{
+					fmt.Println("RENAME NEW", fullname)
 					if watch.names[watch.rename] != 0 {
 						watch.names[name] |= watch.names[watch.rename]
 						delete(watch.names, watch.rename)
