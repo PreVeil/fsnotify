@@ -12,21 +12,25 @@ import (
 	"time"
 )
 
-/*
 func TestEventStringWithValue(t *testing.T) {
 	for opMask, expectedString := range map[Op]string{
-		Chmod | Create: `"/usr/someFile": CREATE|CHMOD`,
-		Rename:         `"/usr/someFile": "": RENAME`,
-		Remove:         `"/usr/someFile": REMOVE`,
-		Write | Chmod:  `"/usr/someFile": WRITE|CHMOD`,
+		Chmod | Create: `newpath="/usr/someFile", oldpath="", op=CREATE|CHMOD, eventID=0`,
+		Rename:         `newpath="/usr/someFile", oldpath="", op= RENAME, eventID=0`,
+		Remove:         `newpath="/usr/someFile", oldpath="", op=REMOVE, eventID=0`,
+		Write | Chmod:  `newpath="/usr/someFile", oldpath="", op=WRITE|CHMOD, eventID=0`,
 	} {
-		event := Event{Name: "/usr/someFile", Op: opMask}
+		event := Event{Name: "/usr/someFile", Op: opMask, OldName: "", ID: 0}
 		if event.String() != expectedString {
 			t.Fatalf("Expected %s, got: %v", expectedString, event.String())
 		}
 
 	}
-}*/
+	renameEvent := Event{Name: "/usr/someFile_Rename", Op: Rename, OldName: "/usr/someFile", ID: 0}
+	renameEventExpectedString := `newpath="/usr/someFile_Rename", oldpath="/usr/someFile", op= RENAME, eventID=0`
+	if renameEvent.String() != renameEventExpectedString {
+		t.Fatalf("Expected %s, got: %v", renameEventExpectedString, renameEvent.String())
+	}
+}
 
 func TestEventOpStringWithValue(t *testing.T) {
 	expectedOpString := "WRITE|CHMOD"

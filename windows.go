@@ -149,7 +149,6 @@ func newEvent(name string, mask uint32, oldName string) Event {
 	if mask&sysFSATTRIB == sysFSATTRIB {
 		e.Op |= Chmod
 	}
-	fmt.Println(" FSNOTIFY | WINDOWS | CREATE EVENT ::: ", e)
 	return e
 }
 
@@ -478,7 +477,6 @@ func (w *Watcher) readEvents() {
 			name := syscall.UTF16ToString(buf)
 			fullname := filepath.Join(watch.path, name)
 			var mask uint64
-			fmt.Println("Fstnotify | windows | raw action", raw.Action, fullname)
 			switch raw.Action {
 			case syscall.FILE_ACTION_REMOVED:
 				mask = sysFSDELETESELF
@@ -493,8 +491,8 @@ func (w *Watcher) readEvents() {
 					mask = sysFSMOVESELF
 				}
 			}
-			sendNameEvent := func(setOldName bool) {
-				if !setOldName {
+			sendNameEvent := func(isRenameToEvent bool) {
+				if !isRenameToEvent {
 					if watch.rename != "" {
 						if w.sendEvent("", watch.names[name]&mask, watch.rename) {
 							if watch.names[name]&sysFSONESHOT != 0 {
