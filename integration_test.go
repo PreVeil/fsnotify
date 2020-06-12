@@ -666,16 +666,20 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 	// Receive events on the event channel on a separate goroutine
 	eventstream := watcher.Events
 	var renameReceived counter
-	newName := ""
-	oldName := ""
 	done := make(chan bool)
 	go func() {
 		for event := range eventstream {
 			// Only count rename events
 			// Checks if the oldname attribute is set up accordingly
 			if event.Op&Rename == Rename {
-				newName, _ = filepath.Rel(testDir, event.Name)
-				oldName, _ = filepath.Rel(testDir, event.OldName)
+				newName, err := filepath.Rel(testDir, event.Name)
+				if err != nil {
+					t.Errorf("error received: %s", err)
+				}
+				oldName, err := filepath.Rel(testDir, event.OldName)
+				if err != nil {
+					t.Errorf("error received: %s", err)
+				}
 				if newName != oldName+"Renamed" {
 					t.Errorf("rename order messed up: %s", event)
 				}

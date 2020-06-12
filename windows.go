@@ -134,7 +134,7 @@ func newEvent(name string, mask uint32, oldName string) Event {
 		OldName: oldName,
 		ID:      generateID(),
 	}
-	if mask&sysFSMOVEDFROM == sysFSMOVEDFROM || mask&sysFSMOVEDTO == sysFSMOVEDTO {
+	if mask&sysFSMOVEDFROM == sysFSMOVEDFROM || mask&sysFSMOVEDTO == sysFSMOVEDTO || mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF {
 		e.Op |= Rename
 	}
 	if mask&sysFSCREATE == sysFSCREATE {
@@ -145,9 +145,6 @@ func newEvent(name string, mask uint32, oldName string) Event {
 	}
 	if mask&sysFSMODIFY == sysFSMODIFY {
 		e.Op |= Write
-	}
-	if mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF {
-		e.Op |= Rename
 	}
 	if mask&sysFSATTRIB == sysFSATTRIB {
 		e.Op |= Chmod
@@ -488,18 +485,12 @@ func (w *Watcher) readEvents() {
 			case syscall.FILE_ACTION_MODIFIED:
 				mask = sysFSMODIFY
 			case syscall.FILE_ACTION_RENAMED_OLD_NAME:
-				{
-					fmt.Println("RENAME OLD", fullname)
-					watch.rename = filepath.Join(watch.path, name)
-				}
+				watch.rename = filepath.Join(watch.path, name)
 			case syscall.FILE_ACTION_RENAMED_NEW_NAME:
-				{
-					fmt.Println("RENAME NEW", fullname)
-					if watch.names[watch.rename] != 0 {
-						watch.names[name] |= watch.names[watch.rename]
-						delete(watch.names, watch.rename)
-						mask = sysFSMOVESELF
-					}
+				if watch.names[watch.rename] != 0 {
+					watch.names[name] |= watch.names[watch.rename]
+					delete(watch.names, watch.rename)
+					mask = sysFSMOVESELF
 				}
 			}
 			sendNameEvent := func(setOldName bool) {
