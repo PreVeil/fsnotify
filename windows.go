@@ -196,9 +196,13 @@ func (w *Watcher) wakeupReader() error {
 }
 
 func getDir(pathname string) (dir string, err error) {
-	attr, e := syscall.GetFileAttributes(syscall.StringToUTF16Ptr(pathname))
-	if e != nil {
-		return "", os.NewSyscallError("GetFileAttributes", e)
+	name, err := syscall.UTF16PtrFromString(pathname)
+	if err != nil {
+		return "", err
+	}
+	attr, err := syscall.GetFileAttributes(name)
+	if err != nil {
+		return "", os.NewSyscallError("GetFileAttributes", err)
 	}
 	if attr&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		dir = pathname
@@ -210,7 +214,11 @@ func getDir(pathname string) (dir string, err error) {
 }
 
 func getIno(path string) (ino *inode, err error) {
-	h, e := syscall.CreateFile(syscall.StringToUTF16Ptr(path),
+	name, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, e := syscall.CreateFile(name,
 		syscall.FILE_LIST_DIRECTORY,
 		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
 		nil, syscall.OPEN_EXISTING,
@@ -431,6 +439,7 @@ func (w *Watcher) readEvents() {
 		}
 
 		switch e {
+		case nil:
 		case syscall.ERROR_MORE_DATA:
 			if watch == nil {
 				w.Errors <- errors.New("ERROR_MORE_DATA has unexpectedly null lpOverlapped buffer")
@@ -452,7 +461,6 @@ func (w *Watcher) readEvents() {
 		default:
 			w.Errors <- os.NewSyscallError("GetQueuedCompletionPort", e)
 			continue
-		case nil:
 		}
 
 		var offset uint32
@@ -465,8 +473,6 @@ func (w *Watcher) readEvents() {
 
 			// Point "raw" to the event in the buffer
 			raw := (*syscall.FileNotifyInformation)(unsafe.Pointer(&watch.buf[offset]))
-			//buf := (*[syscall.MAX_PATH]uint16)(unsafe.Pointer(&raw.FileName))
-			//name := syscall.UTF16ToString(buf[:raw.FileNameLength/2])
 			size := int(raw.FileNameLength / 2)
 			var buf []uint16
 			sh := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
@@ -483,7 +489,7 @@ func (w *Watcher) readEvents() {
 			case syscall.FILE_ACTION_MODIFIED:
 				mask = sysFSMODIFY
 			case syscall.FILE_ACTION_RENAMED_OLD_NAME:
-				watch.rename = filepath.Join(watch.path, name)
+				watch.rename = fullname
 			case syscall.FILE_ACTION_RENAMED_NEW_NAME:
 				if watch.names[watch.rename] != 0 {
 					watch.names[name] |= watch.names[watch.rename]
@@ -492,14 +498,12 @@ func (w *Watcher) readEvents() {
 				}
 			}
 			sendNameEvent := func(isRenameToEvent bool) {
-				if !isRenameToEvent {
-					if watch.rename != "" {
-						if w.sendEvent("", watch.names[name]&mask, watch.rename) {
-							if watch.names[name]&sysFSONESHOT != 0 {
-								delete(watch.names, name)
-							}
-							watch.rename = ""
+				if !isRenameToEvent && watch.rename != "" {
+					if w.sendEvent("", watch.names[name]&mask, watch.rename) {
+						if watch.names[name]&sysFSONESHOT != 0 {
+							delete(watch.names, name)
 						}
+						watch.rename = ""
 					}
 				}
 				if w.sendEvent(fullname, watch.names[name]&mask, watch.rename) {
@@ -509,6 +513,7 @@ func (w *Watcher) readEvents() {
 				}
 				watch.rename = ""
 			}
+
 			if raw.Action != syscall.FILE_ACTION_RENAMED_OLD_NAME {
 				if raw.Action != syscall.FILE_ACTION_RENAMED_NEW_NAME {
 					sendNameEvent(false)
@@ -527,6 +532,7 @@ func (w *Watcher) readEvents() {
 					sendNameEvent(true)
 				}
 			}
+
 			// Move to the next event in the buffer
 			if raw.NextEntryOffset == 0 {
 				break

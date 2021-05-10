@@ -741,7 +741,7 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 	}
 }
 
-// This test checked if the OldName attribute is set up for the rename event
+// This test checks if the OldName attribute is set up for a rename event.
 func TestFsnotifyRenameEventAttributes(t *testing.T) {
 	watcher := newWatcher(t)
 
