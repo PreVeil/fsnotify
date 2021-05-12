@@ -64,6 +64,10 @@ func (e Event) String() string {
 	return fmt.Sprintf("newpath=%s, oldpath=%s, op=%s, eventID=%d", e.Name, e.OldName, e.Op.String(), e.ID)
 }
 
+func (e Event) GetPath() string {
+	return e.Name
+}
+
 // Common errors that can be reported by a watcher
 var (
 	ErrEventOverflow = errors.New("fsnotify queue overflow")
