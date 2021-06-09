@@ -74,13 +74,6 @@ func addWatch(t *testing.T, watcher *Watcher, dir string) {
 func TestFsnotifyMultipleOperations(t *testing.T) {
 	watcher := newWatcher(t)
 
-	// Receive errors on the error channel on a separate goroutine
-	go func() {
-		for err := range watcher.Errors {
-			t.Fatalf("error received: %s", err)
-		}
-	}()
-
 	// Create directory to watch
 	testDir := tempMkdir(t)
 	defer os.RemoveAll(testDir)
@@ -186,6 +179,10 @@ func TestFsnotifyMultipleOperations(t *testing.T) {
 		t.Log("event channel closed")
 	case <-time.After(2 * time.Second):
 		t.Fatal("event stream was not closed after 2 seconds")
+	case err = <-watcher.Errors:
+		if err != nil {
+			t.Fatalf("watcher error received: %s", err)
+		}
 	}
 }
 
@@ -684,7 +681,6 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 					t.Errorf("rename order messed up: %s", event)
 				}
 				renameReceived.increment()
-				t.Logf("event received: %s", event)
 			}
 		}
 		done <- true
@@ -692,10 +688,9 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 
 	// Define rename action : create a file and rename it
 	// This should add at least one event to the fsnotify event queue
-	numberOfFiles := 1000
+	numberOfFiles := 100
 	testFileNameCommon := "TestFsnotifyEvents.testfile"
 	renameAction := func(t *testing.T, count string) {
-
 		testFile := filepath.Join(testDir, testFileNameCommon+count)
 		f, err := os.OpenFile(testFile, os.O_WRONLY|os.O_CREATE, 0666)
 		if err != nil {
@@ -710,6 +705,7 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 			t.Fatalf("rename failed: %s", err)
 		}
 	}
+
 	// Creates #numberofFiles files and rename them
 	// Avoid buffer overflow by adding a short wait time
 	for i := 0; i < numberOfFiles; i++ {
@@ -741,7 +737,7 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 	}
 }
 
-// This test checked if the OldName attribute is set up for the rename event
+// This test checks if the OldName attribute is set up for a rename event.
 func TestFsnotifyRenameEventAttributes(t *testing.T) {
 	watcher := newWatcher(t)
 
@@ -1014,15 +1010,6 @@ func TestRemovalOfWatch(t *testing.T) {
 		t.Fatalf("Could not remove the watch: %v\n", err)
 	}
 
-	go func() {
-		select {
-		case ev := <-watcher.Events:
-			t.Fatalf("We received event: %v\n", ev)
-		case <-time.After(500 * time.Millisecond):
-			t.Log("No event received, as expected.")
-		}
-	}()
-
 	time.Sleep(200 * time.Millisecond)
 	// Modify the file outside of the watched dir
 	f, err := os.Open(testFileAlreadyExists)
@@ -1036,6 +1023,16 @@ func TestRemovalOfWatch(t *testing.T) {
 		t.Fatalf("chmod failed: %s", err)
 	}
 	time.Sleep(400 * time.Millisecond)
+
+	for {
+		select {
+		case ev := <-watcher.Events:
+			t.Fatalf("We received event: %v\n", ev)
+		case <-time.After(500 * time.Millisecond):
+			t.Log("No event received, as expected.")
+			return
+		}
+	}
 }
 
 func TestFsnotifyAttrib(t *testing.T) {

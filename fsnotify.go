@@ -61,7 +61,11 @@ func (op Op) String() string {
 // String returns a string representation of the event in the form
 // "file: REMOVE|WRITE|..."
 func (e Event) String() string {
-	return fmt.Sprintf("newpath=%q, oldpath=%q, op=%s, eventID=%d", e.Name, e.OldName, e.Op.String(), e.ID)
+	return fmt.Sprintf("newpath=%s, oldpath=%s, op=%s, eventID=%d", e.Name, e.OldName, e.Op.String(), e.ID)
+}
+
+func (e Event) GetPath() string {
+	return e.Name
 }
 
 // Common errors that can be reported by a watcher
