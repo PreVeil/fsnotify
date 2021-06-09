@@ -49,10 +49,6 @@ func NewWatcher() (*Watcher, error) {
 	return w, nil
 }
 
-func CreateFsnotifyEvent(name string, mask uint32, oldname string) Event {
-	return newEvent(name, mask, oldname)
-}
-
 // Close removes all watches and closes the events channel.
 func (w *Watcher) Close() error {
 	if w.isClosed {
@@ -125,15 +121,17 @@ const (
 	sysFSQOVERFLOW = 0x4000
 )
 
-func generateID() uint64 {
+func newEventID() uint64 {
 	return uint64(time.Now().UnixNano())
 }
+
 func newEvent(name string, mask uint32, oldName string) Event {
 	e := Event{
 		Name:    name,
 		OldName: oldName,
-		ID:      generateID(),
+		ID:      newEventID(),
 	}
+
 	if mask&sysFSMOVEDFROM == sysFSMOVEDFROM || mask&sysFSMOVEDTO == sysFSMOVEDTO || mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF {
 		e.Op |= Rename
 	}
