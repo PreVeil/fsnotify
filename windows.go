@@ -308,7 +308,6 @@ func (w *Watcher) addWatch(pathname string, flags uint64) error {
 
 // Must run within the I/O thread.
 func (w *Watcher) remWatch(pathname string) error {
-
 	dir, err := getDir(pathname)
 	if err != nil {
 		return err
