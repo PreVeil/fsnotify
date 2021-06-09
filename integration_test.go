@@ -681,7 +681,6 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 					t.Errorf("rename order messed up: %s", event)
 				}
 				renameReceived.increment()
-				t.Logf("event received: %s", event)
 			}
 		}
 		done <- true
