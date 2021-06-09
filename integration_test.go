@@ -688,7 +688,7 @@ func TestFsnotifyMultipleRenames(t *testing.T) {
 
 	// Define rename action : create a file and rename it
 	// This should add at least one event to the fsnotify event queue
-	numberOfFiles := 1000
+	numberOfFiles := 100
 	testFileNameCommon := "TestFsnotifyEvents.testfile"
 	renameAction := func(t *testing.T, count string) {
 		testFile := filepath.Join(testDir, testFileNameCommon+count)
