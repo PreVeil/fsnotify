@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -120,9 +121,21 @@ const (
 	sysFSQOVERFLOW = 0x4000
 )
 
-func newEvent(name string, mask uint32) Event {
-	e := Event{Name: name}
-	if mask&sysFSCREATE == sysFSCREATE || mask&sysFSMOVEDTO == sysFSMOVEDTO {
+func newEventID() uint64 {
+	return uint64(time.Now().UnixNano())
+}
+
+func newEvent(name string, mask uint32, oldName string) Event {
+	e := Event{
+		Name:    name,
+		OldName: oldName,
+		ID:      newEventID(),
+	}
+
+	if mask&sysFSMOVEDFROM == sysFSMOVEDFROM || mask&sysFSMOVEDTO == sysFSMOVEDTO || mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF {
+		e.Op |= Rename
+	}
+	if mask&sysFSCREATE == sysFSCREATE {
 		e.Op |= Create
 	}
 	if mask&sysFSDELETE == sysFSDELETE || mask&sysFSDELETESELF == sysFSDELETESELF {
@@ -130,9 +143,6 @@ func newEvent(name string, mask uint32) Event {
 	}
 	if mask&sysFSMODIFY == sysFSMODIFY {
 		e.Op |= Write
-	}
-	if mask&sysFSMOVE == sysFSMOVE || mask&sysFSMOVESELF == sysFSMOVESELF || mask&sysFSMOVEDFROM == sysFSMOVEDFROM {
-		e.Op |= Rename
 	}
 	if mask&sysFSATTRIB == sysFSATTRIB {
 		e.Op |= Chmod
@@ -184,9 +194,13 @@ func (w *Watcher) wakeupReader() error {
 }
 
 func getDir(pathname string) (dir string, err error) {
-	attr, e := syscall.GetFileAttributes(syscall.StringToUTF16Ptr(pathname))
-	if e != nil {
-		return "", os.NewSyscallError("GetFileAttributes", e)
+	name, err := syscall.UTF16PtrFromString(pathname)
+	if err != nil {
+		return "", err
+	}
+	attr, err := syscall.GetFileAttributes(name)
+	if err != nil {
+		return "", os.NewSyscallError("GetFileAttributes", err)
 	}
 	if attr&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		dir = pathname
@@ -198,7 +212,11 @@ func getDir(pathname string) (dir string, err error) {
 }
 
 func getIno(path string) (ino *inode, err error) {
-	h, e := syscall.CreateFile(syscall.StringToUTF16Ptr(path),
+	name, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, e := syscall.CreateFile(name,
 		syscall.FILE_LIST_DIRECTORY,
 		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
 		nil, syscall.OPEN_EXISTING,
@@ -303,11 +321,11 @@ func (w *Watcher) remWatch(pathname string) error {
 		return fmt.Errorf("can't remove non-existent watch for: %s", pathname)
 	}
 	if pathname == dir {
-		w.sendEvent(watch.path, watch.mask&sysFSIGNORED)
+		w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "")
 		watch.mask = 0
 	} else {
 		name := filepath.Base(pathname)
-		w.sendEvent(filepath.Join(watch.path, name), watch.names[name]&sysFSIGNORED)
+		w.sendEvent(filepath.Join(watch.path, name), watch.names[name]&sysFSIGNORED, "")
 		delete(watch.names, name)
 	}
 	return w.startRead(watch)
@@ -317,13 +335,13 @@ func (w *Watcher) remWatch(pathname string) error {
 func (w *Watcher) deleteWatch(watch *watch) {
 	for name, mask := range watch.names {
 		if mask&provisional == 0 {
-			w.sendEvent(filepath.Join(watch.path, name), mask&sysFSIGNORED)
+			w.sendEvent(filepath.Join(watch.path, name), mask&sysFSIGNORED, "")
 		}
 		delete(watch.names, name)
 	}
 	if watch.mask != 0 {
 		if watch.mask&provisional == 0 {
-			w.sendEvent(watch.path, watch.mask&sysFSIGNORED)
+			w.sendEvent(watch.path, watch.mask&sysFSIGNORED, "")
 		}
 		watch.mask = 0
 	}
@@ -356,7 +374,7 @@ func (w *Watcher) startRead(watch *watch) error {
 		err := os.NewSyscallError("ReadDirectoryChanges", e)
 		if e == syscall.ERROR_ACCESS_DENIED && watch.mask&provisional == 0 {
 			// Watched directory was probably removed
-			if w.sendEvent(watch.path, watch.mask&sysFSDELETESELF) {
+			if w.sendEvent(watch.path, watch.mask&sysFSDELETESELF, "") {
 				if watch.mask&sysFSONESHOT != 0 {
 					watch.mask = 0
 				}
@@ -420,6 +438,7 @@ func (w *Watcher) readEvents() {
 		}
 
 		switch e {
+		case nil:
 		case syscall.ERROR_MORE_DATA:
 			if watch == nil {
 				w.Errors <- errors.New("ERROR_MORE_DATA has unexpectedly null lpOverlapped buffer")
@@ -431,7 +450,7 @@ func (w *Watcher) readEvents() {
 			}
 		case syscall.ERROR_ACCESS_DENIED:
 			// Watched directory was probably removed
-			w.sendEvent(watch.path, watch.mask&sysFSDELETESELF)
+			w.sendEvent(watch.path, watch.mask&sysFSDELETESELF, "")
 			w.deleteWatch(watch)
 			w.startRead(watch)
 			continue
@@ -441,21 +460,18 @@ func (w *Watcher) readEvents() {
 		default:
 			w.Errors <- os.NewSyscallError("GetQueuedCompletionPort", e)
 			continue
-		case nil:
 		}
 
 		var offset uint32
 		for {
 			if n == 0 {
-				w.Events <- newEvent("", sysFSQOVERFLOW)
+				w.Events <- newEvent("", sysFSQOVERFLOW, "")
 				w.Errors <- errors.New("short read in readEvents()")
 				break
 			}
 
 			// Point "raw" to the event in the buffer
 			raw := (*syscall.FileNotifyInformation)(unsafe.Pointer(&watch.buf[offset]))
-			//buf := (*[syscall.MAX_PATH]uint16)(unsafe.Pointer(&raw.FileName))
-			//name := syscall.UTF16ToString(buf[:raw.FileNameLength/2])
 
 			// https://stackoverflow.com/questions/51187973/how-to-create-an-array-or-a-slice-from-an-array-unsafe-pointer-in-golang
 			// instead of using a fixed syscall.MAX_PATH buf, we create a buf that is the size of the path name
@@ -468,7 +484,6 @@ func (w *Watcher) readEvents() {
 
 			name := syscall.UTF16ToString(buf)
 			fullname := filepath.Join(watch.path, name)
-
 			var mask uint64
 			switch raw.Action {
 			case syscall.FILE_ACTION_REMOVED:
@@ -476,7 +491,7 @@ func (w *Watcher) readEvents() {
 			case syscall.FILE_ACTION_MODIFIED:
 				mask = sysFSMODIFY
 			case syscall.FILE_ACTION_RENAMED_OLD_NAME:
-				watch.rename = name
+				watch.rename = fullname
 			case syscall.FILE_ACTION_RENAMED_NEW_NAME:
 				if watch.names[watch.rename] != 0 {
 					watch.names[name] |= watch.names[watch.rename]
@@ -484,29 +499,40 @@ func (w *Watcher) readEvents() {
 					mask = sysFSMOVESELF
 				}
 			}
-
-			sendNameEvent := func() {
-				if w.sendEvent(fullname, watch.names[name]&mask) {
+			sendNameEvent := func(isRenameToEvent bool) {
+				if !isRenameToEvent && watch.rename != "" {
+					if w.sendEvent("", watch.names[name]&mask, watch.rename) {
+						if watch.names[name]&sysFSONESHOT != 0 {
+							delete(watch.names, name)
+						}
+						watch.rename = ""
+					}
+				}
+				if w.sendEvent(fullname, watch.names[name]&mask, watch.rename) {
 					if watch.names[name]&sysFSONESHOT != 0 {
 						delete(watch.names, name)
 					}
 				}
+				watch.rename = ""
 			}
-			if raw.Action != syscall.FILE_ACTION_RENAMED_NEW_NAME {
-				sendNameEvent()
-			}
-			if raw.Action == syscall.FILE_ACTION_REMOVED {
-				w.sendEvent(fullname, watch.names[name]&sysFSIGNORED)
-				delete(watch.names, name)
-			}
-			if w.sendEvent(fullname, watch.mask&toFSnotifyFlags(raw.Action)) {
-				if watch.mask&sysFSONESHOT != 0 {
-					watch.mask = 0
+
+			if raw.Action != syscall.FILE_ACTION_RENAMED_OLD_NAME {
+				if raw.Action != syscall.FILE_ACTION_RENAMED_NEW_NAME {
+					sendNameEvent(false)
 				}
-			}
-			if raw.Action == syscall.FILE_ACTION_RENAMED_NEW_NAME {
-				fullname = filepath.Join(watch.path, watch.rename)
-				sendNameEvent()
+				if raw.Action == syscall.FILE_ACTION_REMOVED {
+					w.sendEvent(fullname, watch.names[name]&sysFSIGNORED, "")
+					delete(watch.names, name)
+				}
+				if w.sendEvent(fullname, watch.mask&toFSnotifyFlags(raw.Action), watch.rename) {
+					if watch.mask&sysFSONESHOT != 0 {
+						watch.mask = 0
+					}
+				}
+				if raw.Action == syscall.FILE_ACTION_RENAMED_NEW_NAME {
+					fullname = filepath.Join(watch.path, name)
+					sendNameEvent(true)
+				}
 			}
 
 			// Move to the next event in the buffer
@@ -528,11 +554,11 @@ func (w *Watcher) readEvents() {
 	}
 }
 
-func (w *Watcher) sendEvent(name string, mask uint64) bool {
+func (w *Watcher) sendEvent(name string, mask uint64, oldName string) bool {
 	if mask == 0 {
 		return false
 	}
-	event := newEvent(name, uint32(mask))
+	event := newEvent(name, uint32(mask), oldName)
 	select {
 	case ch := <-w.quit:
 		w.quit <- ch

@@ -7,23 +7,31 @@
 package fsnotify
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
 )
 
 func TestEventStringWithValue(t *testing.T) {
+	formatEvent := func(name, oldName string, op Op, id uint64) string {
+		return fmt.Sprintf("newpath=%s, oldpath=%s, op=%s, eventID=%d", name, oldName, op.String(), id)
+	}
 	for opMask, expectedString := range map[Op]string{
-		Chmod | Create: `"/usr/someFile": CREATE|CHMOD`,
-		Rename:         `"/usr/someFile": RENAME`,
-		Remove:         `"/usr/someFile": REMOVE`,
-		Write | Chmod:  `"/usr/someFile": WRITE|CHMOD`,
+		Chmod | Create: formatEvent("/usr/someFile", "", Create|Chmod, 0),
+		Rename:         formatEvent("/usr/someFile", "", Rename, 0),
+		Remove:         formatEvent("/usr/someFile", "", Remove, 0),
+		Write | Chmod:  formatEvent("/usr/someFile", "", Write|Chmod, 0),
 	} {
-		event := Event{Name: "/usr/someFile", Op: opMask}
+		event := Event{Name: "/usr/someFile", Op: opMask, OldName: "", ID: 0}
 		if event.String() != expectedString {
 			t.Fatalf("Expected %s, got: %v", expectedString, event.String())
 		}
-
+	}
+	renameEvent := Event{Name: "/usr/someFile_Rename", Op: Rename, OldName: "/usr/someFile", ID: 123}
+	renameEventExpectedString := formatEvent("/usr/someFile_Rename", "/usr/someFile", Rename, 123)
+	if renameEvent.String() != renameEventExpectedString {
+		t.Fatalf("Expected %s, got: %v", renameEventExpectedString, renameEvent.String())
 	}
 }
 

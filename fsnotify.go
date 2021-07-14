@@ -15,8 +15,10 @@ import (
 
 // Event represents a single file system notification.
 type Event struct {
-	Name string // Relative path to the file or directory.
-	Op   Op     // File operation that triggered the event.
+	Name    string // Relative path to the file or directory.
+	Op      Op     // File operation that triggered the event.
+	OldName string
+	ID      uint64
 }
 
 // Op describes a set of file operations.
@@ -59,7 +61,11 @@ func (op Op) String() string {
 // String returns a string representation of the event in the form
 // "file: REMOVE|WRITE|..."
 func (e Event) String() string {
-	return fmt.Sprintf("%q: %s", e.Name, e.Op.String())
+	return fmt.Sprintf("newpath=%s, oldpath=%s, op=%s, eventID=%d", e.Name, e.OldName, e.Op.String(), e.ID)
+}
+
+func (e Event) GetPath() string {
+	return e.Name
 }
 
 // Common errors that can be reported by a watcher
